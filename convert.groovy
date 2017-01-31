@@ -1,5 +1,14 @@
 // conversion of universal dependencies files to GATE documents
 
+// NOTE: this uses three different ways of trying to figure out the whitespace
+// to add:
+// * if -o is used it tries to use the comments, by default "sentence-text"
+//   However this does often not work because the text there does not actually match
+//   the word strings that follow
+// If -o is not used: these two are combined
+// * any SpaceAfter=No comment in the last field 
+// * No space before ,:;?!')}], no space after {[(
+
 import gate.*
 import java.utils.*
 import groovy.util.CliBuilder
@@ -23,7 +32,7 @@ if(options.n) {
 }
 
 def useOrig = false
-if(options.O) useOrig = true
+if(options.o) useOrig = true
   
 def sentIdPrefix = "# sentid: "
 if(options.i) sentIdPrefix = "# "+options.i+" "
@@ -164,14 +173,17 @@ while((line = br.readLine())!= null){
         }
         word['tokens'] = tokensForWord
       } else {
-        // we have got a token or empty node
-        // For now we do not support empty nodes
+        // NOTE: we could get a line for an "empty" node here
+        // For now we silently ignore empty nodes!
+        // TODO: later, we could just add them here and then treat
+        // differently when creating annotations, based on the format of the token index
         if(tokens[0].matches("[0-9]+\\.[0-9]+")) {
-          System.err.println("Empty nodes not supported yet")
-          System.exit(1)
+          // ignore: empty nodes MUST appear after actual token rows, so 
+          // we will always get some token infor for a word anyway!
+        } else {
+          word['string'] = tokens[1]
+          word['tokens'] = [ tokens ]
         }
-        word['string'] = tokens[1]
-        word['tokens'] = [ tokens ]
       }
       wordList.add(word)
     } // we have a proper line with 10 fields
@@ -209,6 +221,9 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
   sb = new StringBuilder()
   addSpace = false   // we never need to add space before the first word
   tokenInfos = []
+  // if the sentenceText is non-empty, make sure it is trimmed
+  if(sentenceText != null) sentenceText = sentenceText.trim()
+  stIndex = 0  // the index of where we are in sentenceText
   for(word in wordList) {
     wordString = word['string']
     // first check if we have to add whitespace after the previous token
@@ -221,10 +236,51 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
     // one of ({[
     // Otherwise, if the current word is one of ,;:?!.)}] we do not add a space
     if(sentenceText != null && !sentenceText.isEmpty()) {
-      System.err.println("Original text usage not implemented yet")
-      System.exit(1)
-    } else {
-      if(addSpace && !wordString.matches("[,;:?!.)}\\]]")) {
+      // we only get passed a non-empty sentenceText if we both found
+      // a comment and the option to use it was set.
+      //
+      // We should only have two situations: either the current word matches
+      // the current offset in the sentenceText, then we do not insert any whitespace.
+      // Or the current offset points at whitespace, then we add all the whitespace
+      // we find to the document. Once we hit non-whitespace, we MUST find the word
+      // we expect. If this goes wrong, we log an error, reset the sentenceText
+      // and instead use the heuristics-based approach
+      toAdd = ""
+      if(stIndex >= sentenceText.size()) {
+        System.err.println("Error trying to use the original text for line "+nLineTo+" scanning beyond end")
+        sentenceText = ""        
+      } else {
+        while(sentenceText.substring(stIndex,stIndex+1).equals(" ")) {
+          toAdd += " "
+          stIndex += 1
+          if(stIndex > sentenceText.size()) {
+            System.err.println("Error trying to use the original text for line "+nLineTo+" scanning beyond end")
+            sentenceText = ""
+            break
+          }
+        }
+      }
+      // if we already found a problem, just skip
+      if(sentenceText.isEmpty()) {
+      } else {
+        if((stIndex+wordString.size())>sentenceText.size() || !sentenceText.substring(stIndex,stIndex+wordString.size()).equals(wordString)) {
+          wordStrings = wordList.collect { it['string'] }
+          //System.err.println("Error trying to use the original text for line "+nLineTo+" sentence "+nSent+
+          //" wordString="+wordString+" found="+sentenceText.substring(stIndex,stIndex+wordString.size())+
+          //" fullText="+sentenceText+" words="+wordStrings.join(","))
+          System.err.println("Error trying to use the original text for line "+nLineTo+" sentence "+nSent+
+          " wordString="+wordString+" found="+sentenceText.substring(stIndex,Math.min(sentenceText.size(),stIndex+wordString.size())))
+          sentenceText = ""        
+        } else {
+          sb.append(toAdd)
+        }
+        stIndex += wordString.size()
+      }
+    } 
+    // this is a separate if since in the previous one we could change sentenceText
+    // to be empty so we can fall back to this method
+    if(sentenceText == null || sentenceText.isEmpty()) {
+      if(addSpace && !wordString.matches("[,;:?!.')}\\]]")) {
         sb.append(" ")
         curOffsetFrom += 1
       }
@@ -332,79 +388,3 @@ def writeDocumentIfNeeded(doc, inFile, outDir, nsent) {
   }
   return doc
 }
-/*
-
-snr = 0
-StringBuilder sb = new StringBuilder()
-ArrayList<FeatureMap> fs = new ArrayList<FeatureMap>()
-ArrayList<Integer> froms = new ArrayList<Integer>()
-ArrayList<Integer> tos = new ArrayList<Integer>()
-curFrom = 0
-curTo = 0
-sidFrom = ""
-body.s.each { sentence -> 
-  //System.println("Processing sentence " + sentence.attributes()["id"])
-  // we count sentences: whenever we got SMAX, we save what we have to
-  // a new document
-  snr += 1
-  if(sidFrom.isEmpty()) {
-    sidFrom = sentence.attributes()["id"]
-  }
-  sidTo = sentence.attributes()["id"]
-  // get the list of terminals
-  terms = sentence.graph.terminals.t
-  terms.each { term -> 
-    a = term.attributes()
-    string = a["word"]
-    fm = gate.Utils.featureMap(
-      "lemma",a["lemma"],
-      "pos",a["pos"],
-      "morph",a["morph"],
-      "case",a["case"],
-      "number",a["number"],
-      "gender",a["gender"],
-      "person",a["person"],
-      "degree",a["degree"],
-      "tense",a["tense"],
-      "mood",a["mood"]
-    )
-    // add the string to the sb and remember the start and end offset of 
-    // the annotation
-    if(string.equals(",") || string.equals(";") || string.equals("!") || string.equals("?") || string.equals(".") ||
-       string.equals(":") || string.equals(")")) {
-      sb.append(string)
-      curTo += string.size()
-    } else {
-      sb.append(" ")
-      sb.append(string)
-      curFrom += 1
-      curTo = curTo + string.size() +1
-    }
-    fs.add(fm)
-    froms.add(curFrom)
-    tos.add(curTo)
-    curFrom = curTo
-  }
-  if(snr == SMAX) {
-    // save what we have to a gate document
-    name = "tiger_" + sidFrom + "_" + sidTo + ".xml"
-    writeDocument(sb,fs,froms,tos, name)
-    // reset 
-    snr = 0
-    curFrom = 0
-    curTo = 0
-    sidFrom = ""
-    sb = new StringBuilder()
-    fs = new ArrayList<FeatureMap>()
-    froms = new ArrayList<Integer>()
-    tos = new ArrayList<Integer>()
-  }
-  
-}
-
-if(sb.length() > 0) {
-  name = "tiger_" + sidFrom + "_" + sidTo + ".xml"
-  writeDocument(sb,fs,froms,tos,name)
-}
-
-*/
