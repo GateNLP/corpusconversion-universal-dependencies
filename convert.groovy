@@ -177,6 +177,8 @@ while((line = br.readLine())!= null){
     } // we have a proper line with 10 fields
   }
 }
+// Write out any partially created document
+writeDocumentIfNeeded(curDoc, inFile, outDir, 0)
 
 
 System.err.println("INFO: number of lines read:        "+nLine)
@@ -205,7 +207,6 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
   curOffsetTo = curOffsetFrom
   fmDoc = doc.getFeatures()
   sb = new StringBuilder()
-  token2id = [:]
   addSpace = false   // we never need to add space before the first word
   tokenInfos = []
   for(word in wordList) {
@@ -243,12 +244,39 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
     tokens = word['tokens']
     for(token in tokens) {
       // create the token features from the field
+// 0: token number, starting at 1. "may be a range for multiword tokens, may be a decimal number for empty nodes"
+// 1: token string: word form or punctuation
+// 2: lemma or stem
+// 3: universal dependency POS tag
+// 4: original POS tag or _ if not included
+// 5: morpholoical features in the form Key1=Value1|Key2=Value2 or _ if empty
+// 6: index of the head of the current word which is either a token number or 0
+// 7: universial dependency relation to the head or a defined language-specific subtype of one
+// 8: Enhanced dependency graph in the form of a list of head-deprel pairs
+// 9: other annotations, sometimes contains SpaceAfter=No
       fm = gate.Factory.newFeatureMap()
       fm.put("string",token[1])
       fm.put("lemma",token[2])
       fm.put("upos",token[3])
-      if(!token[4].equals("_")) fm.put("pos",token[4])
-      tokenInfos.add([fm:fm, from:curOffsetFrom, to:curOffsetTo])
+      if(!token[4].equals("_")) fm.put("category",token[4])
+      if(!token[5].equals("_")) {
+        keyvals = token[5].split("\\|",-1)
+        for(keyval in keyvals) {
+          (k,v) = keyval.split("=")
+          fm.put(k,v)
+        }
+      }
+      headId = ""
+      if(!token[6].equals("_")) {
+        headId = token[6]
+      }
+      if(!token[7].equals("_")) {
+        fm.put("deprel",token[7])
+      }
+      if(token[8].matches(".*SpaceAfter=No.*")) {
+        addSpace=false
+      }
+      tokenInfos.add([fm:fm, from:curOffsetFrom, to:curOffsetTo, headId:headId, idx:token[0]])
     }
     curOffsetFrom = curOffsetTo
   }
@@ -256,16 +284,31 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
   // append the content string to the document
   endOffset = doc.getContent().size()
   doc.edit(endOffset,endOffset,new gate.corpora.DocumentContentImpl(sb.toString()))
+  token2id = [:]
   for(tokenInfo in tokenInfos) {
-    gate.Utils.addAnn(outputAS,tokenInfo['from'],tokenInfo['to'],"Token",tokenInfo['fm'])
+    id=gate.Utils.addAnn(outputAS,tokenInfo['from'],tokenInfo['to'],"Token",tokenInfo['fm'])
+    token2id[tokenInfo['idx']] = id
   }
+  
   sfm = gate.Factory.newFeatureMap()
   sfm.put("gate.conversion.nSent",nSent)
   sfm.put("gate.conversion.sentId",sentenceId)
   sfm.put("gate.conversion.sentComments",sentenceComments)
   sfm.put("gate.conversion.nLineTo",nLineTo)
   sfm.put("gate.conversion.nLineFrom",(nLineTo-(tokenInfos.size())))
-  gate.Utils.addAnn(outputAS,tokenInfos[0]['from'],tokenInfos[-1]['to'],"Sentence",sfm)
+  sid=gate.Utils.addAnn(outputAS,tokenInfos[0]['from'],tokenInfos[-1]['to'],"Sentence",sfm)
+  // now that we have all the annotation ids, go through the featuremaps again
+  // and add the proper annotation id for the head and the sentence annotation id for the root
+  for(tokenInfo in tokenInfos) {
+    headId = tokenInfo['headId']
+    if(!headId.isEmpty()) {
+      if(headId.equals("0")) {
+        tokenInfo['fm'].put("head",sid)
+      } else {
+        tokenInfo['fm'].put("head",token2id[tokenInfo['headId']])
+      }
+    }
+  }  
   return doc
 }
 
@@ -273,8 +316,9 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
 def writeDocumentIfNeeded(doc, inFile, outDir, nsent) {
   sFrom = (int)doc.getFeatures().get("nSentFrom")
   sTo = (int)doc.getFeatures().get("nSentTo")
-  if(sTo-sFrom+1 == nsent) {
-    if(nsent == 1) {
+  haveSents = sTo-sFrom+1
+  if(haveSents >= nsent) {
+    if(haveSents == 1) {
       name = inFile.getName() + ".gate.s"+sFrom+".xml"
     } else {
       name = inFile.getName() + ".gate.s"+sFrom+"_"+sTo+".xml"
