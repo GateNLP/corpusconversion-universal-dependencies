@@ -58,17 +58,7 @@ System.err.println("INFO: sentence text prefix: >>"+sentOrigPrefix+"<<")
 
 gate.Gate.init()
 
-sentences = []  // current list of sentences to convert to a document
-tokenList = []  // current list of tokens for the current sentence
-sentenceTexts = [] // current list of sentence texts including whitespace, if known
-sentenceText = ""   // current sentence text including whitespace, if known
-sentenceId = ""
-sentenceIds = []
-
-nSent = 0       // current sentence number, starting counting with 1
-nLine = 0
-nDoc = 0
-
+gate.Gate.getUserConfig().put(gate.GateConstants.DOCEDIT_INSERT_PREPEND,true)
 // Columns in the CONLL format: see http://universaldependencies.org/format.html
 // 0: token number, starting at 1. "may be a range for multiword tokens, may be a decimal number for empty nodes"
 // 1: token string: word form or punctuation
@@ -88,42 +78,103 @@ nDoc = 0
 //   2   nos   nosotros
 // We convert this to a single token "vamonos" with feature lemma="ir nosotros"
 //
-// Empty nodes are indicated by a token number of the form n.m 
-inFile.eachLine { line ->
+// Empty nodes are indicated by a token number of the form n.m
+
+// List of strings which should get added to the document. For each string there
+// is normally one token, except if there is a multi-token word.
+// Entries in this list are hashes with the keys: string, tokens
+wordList = []
+sentenceText = ""   // current sentence text including whitespace, if known
+sentenceId = ""     // current sentence id if known
+// list of other comments for that sentence
+sentenceComments = []
+
+nSent = 0       // current sentence number, starting counting with 1
+nLine = 0       // current line number, countring from 1
+nDoc = 0        // current document number, counting from 1
+
+// holds the current document where a sentence should get added to, or is
+// null if we do not have a document yet, or if we just wrote a document.
+// So, whenever this is not-null, we have something that needs eventually get
+// written out.
+curDoc = null
+
+fis = new FileInputStream(inFile) 
+br = new BufferedReader(new InputStreamReader(fis,"UTF-8"))
+while((line = br.readLine())!= null){
   nLine += 1
   line = line.trim()
-  // we simply collect all the token information for each sentence in here and
-  // put each sentence into a list as soon as we have it. Once we have 
-  // the required number of sentences we create a document from that using
-  // writeDocument(sentences,sentenceTexts,sentenceIds,nSent,inFile,outDir)
+  // we simply collect all the information for each sentence and
+  // once the sentence is finished (indicated by the empty line), we 
+  // add the sentence and the related annotations to the current document.
+  // Whenever we have finished adding the required number of sentences to 
+  // a document, it gets written out.
   if(line.isEmpty()) {
-    // end of sentence, add the current token list to the sentences
     nSent += 1
-    sentences.add(tokenList)
-    sentenceTexts.add(sentenceText)
+
+    // At this point wordList should contain >1 word hashes, each of which 
+    // with one or more token lists
+    // Add the sentence to the document
+    curDoc = addSentenceToDocument(curDoc, sentenceText, wordList, sentenceId, nSent, sentenceComments, nLine)
+    curDoc = writeDocumentIfNeeded(curDoc, inFile, outDir, nsent)
+    
+    // reset for the next sentence
     sentenceText = ""
+    wordList = []
     tokenList = []
-    sentenceIds.add(sentenceId)
     sentenceId = ""
-    if(sentences.size() == nsent) {
-      writeDocument(sentences,sentenceTexts,sentenceIds,nSent,inFile,outDir)
-      sentences = []
-      sentenceTexts = []
-      sentenceIds = []
-    }
-  } else if(line.startsWith(sentOrigPrefix)) {
+    sentenceComments = []
+  // if we want to use the original text, if present, remember it. If we 
+  // do not want to use it, we will simply remember the comment just like other
+  // comments
+  } else if(useOrig && line.startsWith(sentOrigPrefix)) {
     sentenceText = line.substring(sentOrigPrefix.size())
   } else if(line.startsWith(sentIdPrefix)) {
     sentenceId = line.substring(sentIdPrefix.size())
   } else if(line.startsWith("#")) {
-    // some other comment line to remember for this sentence
+    sentenceComments.add(line)
   } else {
-    token = line.split("\t",-1)
-    if(token.size() != 10) {
+    // this should be a line that has 10 fields as described above
+    tokens = line.split("\t",-1)
+    if(tokens.size() != 10) {
       System.err.println("ERROR: not 10 fields in line "+nLine)
     } else {
-      // we have to distinguish two cases: normal tokens and multitoken-words
-    }
+      word = [:]
+      // if we find a range, we read the expected rows in here and add the
+      // tokens to the word, then add the word
+      if(tokens[0].matches("[0-9]+-[0-9]+")) {        
+        (from,to) = tokens[0].split("-")
+        word['string'] = tokens[1]
+        from = from.toInteger()
+        to = to.toInteger()
+        tokensForWord = []
+        for(i in (from..to)) {
+          line = br.readLine()
+          if(line == null) {
+            System.err.println("Unexpected EOF when reading multi-token word")
+            System.exit(1)
+          }
+          line = line.trim()
+          tokens = line.split("\t",-1)
+          if(!tokens[0].equals(""+i)) {
+            System.err.println("Token id does not match expected id in line "+nLine)
+            System.exit(1)
+          }
+          tokensForWord.add(tokens)
+        }
+        word['tokens'] = tokensForWord
+      } else {
+        // we have got a token or empty node
+        // For now we do not support empty nodes
+        if(tokens[0].matches("[0-9]+\\.[0-9]+")) {
+          System.err.println("Empty nodes not supported yet")
+          System.exit(1)
+        }
+        word['string'] = tokens[1]
+        word['tokens'] = [ tokens ]
+      }
+      wordList.add(word)
+    } // we have a proper line with 10 fields
   }
 }
 
@@ -132,28 +183,111 @@ System.err.println("INFO: number of lines read:        "+nLine)
 System.err.println("INFO: number of sentences found:   "+nSent)
 System.err.println("INFO: number of documents written: "+nDoc)
 
-def writeDocument(sentences, sentenceTexts,sentenceIds,nSent,inFile,outDir) {
-  // NOTE: sentenceIds not used yet, just a placeholder for later!
-  content = sentences.join("\n")
-  //System.err.println("Got content: "+content.size())
-  parms = Factory.newFeatureMap()
-  parms.put(Document.DOCUMENT_STRING_CONTENT_PARAMETER_NAME, content)
-  parms.put(Document.DOCUMENT_MIME_TYPE_PARAMETER_NAME, "text/plain")
-  doc = (Document) gate.Factory.createResource("gate.corpora.DocumentImpl", parms)
+def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenceComments,nLineTo) {
+  // if the doc is null, create a new one which will later returned, otherwise
+  // the one we got will get returned
+  if(doc == null) {
+    parms = Factory.newFeatureMap()
+    parms.put(Document.DOCUMENT_STRING_CONTENT_PARAMETER_NAME, "")
+    parms.put(Document.DOCUMENT_MIME_TYPE_PARAMETER_NAME, "text/plain")
+    doc = (Document) gate.Factory.createResource("gate.corpora.DocumentImpl", parms)
+    doc.getFeatures().put("nSentFrom",nSent)
+  }
+  doc.getFeatures().put("nSentTo",nSent)
+  outputAS = doc.getAnnotations("Key")
+  curOffsetFrom = doc.getContent().size()
+  // if We already have something (another sentence), then first add 
+  // a new line to the document to separate the sentence we are going to add  
+  if(curOffsetFrom > 0) {
+    doc.edit(curOffsetFrom,curOffsetFrom,new gate.corpora.DocumentContentImpl("\n"))
+    curOffsetFrom = doc.getContent().size()
+  }
+  curOffsetTo = curOffsetFrom
   fmDoc = doc.getFeatures()
-  //for(int i=0; i<fs.size(); i++) {
-  //  gate.Utils.addAnn(doc.getAnnotations("Key"),froms.get(i),tos.get(i),"Token",fs.get(i));
-  //}
-  //System.err.println("DEBUG: featurs added, writing")
-  sFrom = nSent - sentences.size() + 1
-  sTo = nSent
-  name = inFile.getName() + ".gate.s"+sFrom+"_"+sTo+".xml"
-  outFile = new File(outDir,name)
-  gate.corpora.DocumentStaxUtils.writeDocument(doc,outFile)
-  nDoc += 1
-  //System.err.println("Document saved: "+outFile)
+  sb = new StringBuilder()
+  token2id = [:]
+  addSpace = false   // we never need to add space before the first word
+  tokenInfos = []
+  for(word in wordList) {
+    wordString = word['string']
+    // first check if we have to add whitespace after the previous token
+    // we do this using the following heuristics:
+    // if we have the original sentence text, then we advance until we find
+    // the current word and count the whitespace. 
+    // If we do not have the original sentence text, then if the addSpace flag
+    // is false, we do not add a space. This is set to false in the previous
+    // word if the line contained SpaceAfter=No or if the previous word was
+    // one of ({[
+    // Otherwise, if the current word is one of ,;:?!.)}] we do not add a space
+    if(sentenceText != null && !sentenceText.isEmpty()) {
+      System.err.println("Original text usage not implemented yet")
+      System.exit(1)
+    } else {
+      if(addSpace && !wordString.matches("[,;:?!.)}\\]]")) {
+        sb.append(" ")
+        curOffsetFrom += 1
+      }
+      addSpace = true
+    }    
+    
+    // add the word string to the document
+    sb.append(wordString)
+    if(wordString.matches("[({\\[]")) {
+      addSpace = false
+    }
+    curOffsetTo = curOffsetFrom + wordString.size()
+    
+    
+    // add the token annotations and remember how each annotation maps to the 
+    // token id number
+    tokens = word['tokens']
+    for(token in tokens) {
+      // create the token features from the field
+      fm = gate.Factory.newFeatureMap()
+      fm.put("string",token[1])
+      fm.put("lemma",token[2])
+      fm.put("upos",token[3])
+      if(!token[4].equals("_")) fm.put("pos",token[4])
+      tokenInfos.add([fm:fm, from:curOffsetFrom, to:curOffsetTo])
+    }
+    curOffsetFrom = curOffsetTo
+  }
+  
+  // append the content string to the document
+  endOffset = doc.getContent().size()
+  doc.edit(endOffset,endOffset,new gate.corpora.DocumentContentImpl(sb.toString()))
+  for(tokenInfo in tokenInfos) {
+    gate.Utils.addAnn(outputAS,tokenInfo['from'],tokenInfo['to'],"Token",tokenInfo['fm'])
+  }
+  sfm = gate.Factory.newFeatureMap()
+  sfm.put("gate.conversion.nSent",nSent)
+  sfm.put("gate.conversion.sentId",sentenceId)
+  sfm.put("gate.conversion.sentComments",sentenceComments)
+  sfm.put("gate.conversion.nLineTo",nLineTo)
+  sfm.put("gate.conversion.nLineFrom",(nLineTo-(tokenInfos.size())))
+  gate.Utils.addAnn(outputAS,tokenInfos[0]['from'],tokenInfos[-1]['to'],"Sentence",sfm)
+  return doc
 }
 
+
+def writeDocumentIfNeeded(doc, inFile, outDir, nsent) {
+  sFrom = (int)doc.getFeatures().get("nSentFrom")
+  sTo = (int)doc.getFeatures().get("nSentTo")
+  if(sTo-sFrom+1 == nsent) {
+    if(nsent == 1) {
+      name = inFile.getName() + ".gate.s"+sFrom+".xml"
+    } else {
+      name = inFile.getName() + ".gate.s"+sFrom+"_"+sTo+".xml"
+    }
+    outFile = new File(outDir,name)
+    gate.corpora.DocumentStaxUtils.writeDocument(doc,outFile)  
+    System.err.println("Document saved: "+outFile)
+    nDoc += 1
+    gate.Factory.deleteResource(doc)
+    doc = null
+  }
+  return doc
+}
 /*
 
 snr = 0
