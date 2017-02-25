@@ -1,3 +1,6 @@
 /out
 *~
 /*.conllu
+/tmp
+/convertAll.log
+/UD_

@@ -13,12 +13,16 @@ import gate.*
 import java.utils.*
 import groovy.util.CliBuilder
 
+def sentIdPrefix = "# sentid: "
+def sentOrigPrefix = "# sentence-text: "
+
+
 def cli = new CliBuilder(usage:'convert.groovy [-h] [-n 1] [-o] infile outdir')
 cli.h(longOpt: 'help', "Show usage information")
 cli.o(longOpt: 'orig', "Use original sentence text from comment line if present")
 cli.n(longOpt: 'nsent', args: 1, argName: 'nsent', "Number of sentences per output document")
-cli.i(longOpt: 'sentId', args: 1, argName: 'sentId', "Comment prefix for sentence id comment")
-cli.t(longOpt: 'sentOrig', args: 1, argName: 'sentOrig', "Comment prefix for sentence text comment")
+cli.i(longOpt: 'sentId', args: 1, argName: 'sentId', "Comment prefix for sentence id comment, without leading '# ' and trailing space.")
+cli.t(longOpt: 'sentOrig', args: 1, argName: 'sentOrig', "Comment prefix for sentence text comment, without leading '# ' and trailing space.")
 
 def options = cli.parse(args)
 if(options.h) {
@@ -34,10 +38,8 @@ if(options.n) {
 def useOrig = false
 if(options.o) useOrig = true
   
-def sentIdPrefix = "# sentid: "
 if(options.i) sentIdPrefix = "# "+options.i+" "
   
-def sentOrigPrefix = "# sentence-text: "
 if(options.t) sentOrigPrefix = "# "+options.t+" "
 
 def posArgs = options.arguments()
@@ -125,7 +127,7 @@ while((line = br.readLine())!= null){
     // with one or more token lists
     // Add the sentence to the document
     curDoc = addSentenceToDocument(curDoc, sentenceText, wordList, sentenceId, nSent, sentenceComments, nLine)
-    curDoc = writeDocumentIfNeeded(curDoc, inFile, outDir, nsent)
+    curDoc = writeDocumentIfNeeded(curDoc, inFile, outDir, nsent, nLine)
     
     // reset for the next sentence
     sentenceText = ""
@@ -189,8 +191,9 @@ while((line = br.readLine())!= null){
     } // we have a proper line with 10 fields
   }
 }
-// Write out any partially created document
-writeDocumentIfNeeded(curDoc, inFile, outDir, 0)
+// Write out any partially created document, if there is one. This does nothing
+// if curDoc is null.
+writeDocumentIfNeeded(curDoc, inFile, outDir, 0, nLine)
 
 
 System.err.println("INFO: number of lines read:        "+nLine)
@@ -369,7 +372,10 @@ def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenc
 }
 
 
-def writeDocumentIfNeeded(doc, inFile, outDir, nsent) {
+def writeDocumentIfNeeded(doc, inFile, outDir, nsent,nLine) {
+  if(doc==null) {
+    return doc
+  }
   sFrom = (int)doc.getFeatures().get("nSentFrom")
   sTo = (int)doc.getFeatures().get("nSentTo")
   haveSents = sTo-sFrom+1
