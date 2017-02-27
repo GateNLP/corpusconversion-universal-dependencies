@@ -147,9 +147,17 @@ while((line = br.readLine())!= null){
   } else {
     // this should be a line that has 10 fields as described above
     tokens = line.split("\t",-1)
+    tmp = tokens[1]
     if(tokens.size() != 10) {
       System.err.println("ERROR: not 10 fields in line "+nLine)
     } else {
+      // There is a bug in some of the corpora where some tokens include a Unicode BOM character FEFF
+      // We check each token and remove such that if necessary
+      if (tmp.startsWith("\uFEFF")) {
+        tmp = tmp.substring(1);
+        System.err.println("DEBUG: removing FEFF from word in line nLine, word was "+tokens[1]+", is now "+tmp);
+        tokens[1] = tmp;
+      }
       word = [:]
       // if we find a range, we read the expected rows in here and add the
       // tokens to the word, then add the word
@@ -200,7 +208,7 @@ System.err.println("INFO: number of lines read:        "+nLine)
 System.err.println("INFO: number of sentences found:   "+nSent)
 System.err.println("INFO: number of documents written: "+nDoc)
 
-def addSentenceToDocument(doc, sentenceText,wordList, sentenceId, nSent, sentenceComments,nLineTo) {
+def addSentenceToDocument(doc, sentenceText, wordList, sentenceId, nSent, sentenceComments,nLineTo) {
   // if the doc is null, create a new one which will later returned, otherwise
   // the one we got will get returned
   if(doc == null) {
