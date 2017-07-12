@@ -20,7 +20,7 @@ def sentOrigPrefix = "# sentence-text: "
 def cli = new CliBuilder(usage:'convert.groovy [-h] [-n 1] [-o] infile outdir')
 cli.h(longOpt: 'help', "Show usage information")
 cli.o(longOpt: 'orig', "Use original sentence text from comment line if present")
-cli.n(longOpt: 'nsent', args: 1, argName: 'nsent', "Number of sentences per output document")
+cli.n(longOpt: 'nsent', args: 1, argName: 'nsent', "Number of sentences per output document (0=single output document)")
 cli.i(longOpt: 'sentId', args: 1, argName: 'sentId', "Comment prefix for sentence id comment, without leading '# ' and trailing space.")
 cli.t(longOpt: 'sentOrig', args: 1, argName: 'sentOrig', "Comment prefix for sentence text comment, without leading '# ' and trailing space.")
 
@@ -127,7 +127,7 @@ while((line = br.readLine())!= null){
     // with one or more token lists
     // Add the sentence to the document
     curDoc = addSentenceToDocument(curDoc, sentenceText, wordList, sentenceId, nSent, sentenceComments, nLine)
-    curDoc = writeDocumentIfNeeded(curDoc, inFile, outDir, nsent, nLine)
+    curDoc = writeDocumentIfNeeded(curDoc, inFile, outDir, nsent, nLine, false)
     
     // reset for the next sentence
     sentenceText = ""
@@ -201,7 +201,10 @@ while((line = br.readLine())!= null){
 }
 // Write out any partially created document, if there is one. This does nothing
 // if curDoc is null.
-writeDocumentIfNeeded(curDoc, inFile, outDir, 0, nLine)
+if(nsent==0)
+  writeDocumentIfNeeded(curDoc, inFile, outDir, 0, nLine, true)
+else
+  writeDocumentIfNeeded(curDoc, inFile, outDir, 1, nLine, true)
 
 
 System.err.println("INFO: number of lines read:        "+nLine)
@@ -379,16 +382,23 @@ def addSentenceToDocument(doc, sentenceText, wordList, sentenceId, nSent, senten
   return doc
 }
 
-
-def writeDocumentIfNeeded(doc, inFile, outDir, nsent,nLine) {
+// write out the document if needed and either return the original document or a new one
+// if nsent > 0 then we write if the current number of sentences already in the document
+// has reached nsent. 
+// if nsent is <=0, we only output the document if force is true.
+def writeDocumentIfNeeded(doc, inFile, outDir, nsent,nLine,force) {
   if(doc==null) {
     return doc
   }
   sFrom = (int)doc.getFeatures().get("nSentFrom")
   sTo = (int)doc.getFeatures().get("nSentTo")
   haveSents = sTo-sFrom+1
-  if(haveSents >= nsent) {
-    if(haveSents == 1) {
+  // if nsent is 0 (indicating we should only output at the end of processing, when force=true)
+  // then only output if force is true as well
+  if((nsent==0 && force) || (nsent > 0 && haveSents >= nsent)) {
+    if(nsent==0) {
+      name = inFile.getName() + ".gate.xml"      
+    } else if(haveSents == 1) {
       name = inFile.getName() + ".gate.s"+sFrom+".xml"
     } else {
       name = inFile.getName() + ".gate.s"+sFrom+"_"+sTo+".xml"
