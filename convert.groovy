@@ -23,12 +23,16 @@ cli.o(longOpt: 'orig', "Use original sentence text from comment line if present"
 cli.n(longOpt: 'nsent', args: 1, argName: 'nsent', "Number of sentences per output document (0=single output document)")
 cli.i(longOpt: 'sentId', args: 1, argName: 'sentId', "Comment prefix for sentence id comment, without leading '# ' and trailing space.")
 cli.t(longOpt: 'sentOrig', args: 1, argName: 'sentOrig', "Comment prefix for sentence text comment, without leading '# ' and trailing space.")
+cli.v(longOpt: 'verbose', "Show more verbose information")
+cli.d(longOpt: 'debug', "Show debugging information")
 
 def options = cli.parse(args)
 if(options.h) {
   cli.usage()
   return
 }
+
+debug = options.d
 
 def nsent = 1
 if(options.n) {
@@ -190,12 +194,20 @@ while((line = br.readLine())!= null){
         if(tokens[0].matches("[0-9]+\\.[0-9]+")) {
           // ignore: empty nodes MUST appear after actual token rows, so 
           // we will always get some token infor for a word anyway!
+          // NOTE: this appears to at least sometimes contain an actual token/word????
+          // for now we simply add this as if it was a normal token
+          word['string'] = tokens[1]
+          word['tokens'] = [ tokens ]
         } else {
           word['string'] = tokens[1]
           word['tokens'] = [ tokens ]
         }
       }
-      wordList.add(word)
+      if(word.equals([:])) {
+        System.err.println("DEBUG: not adding empty word for line "+nLine)
+      } else {
+        wordList.add(word)
+      }
     } // we have a proper line with 10 fields
   }
 }
@@ -212,6 +224,9 @@ System.err.println("INFO: number of sentences found:   "+nSent)
 System.err.println("INFO: number of documents written: "+nDoc)
 
 def addSentenceToDocument(doc, sentenceText, wordList, sentenceId, nSent, sentenceComments,nLineTo) {
+  if(sentenceText.isEmpty()) {
+    // System.err.println("DEBUG: wordList is "+wordList)
+  }
   // if the doc is null, create a new one which will later returned, otherwise
   // the one we got will get returned
   if(doc == null) {
@@ -294,7 +309,10 @@ def addSentenceToDocument(doc, sentenceText, wordList, sentenceId, nSent, senten
     // this is a separate if since in the previous one we could change sentenceText
     // to be empty so we can fall back to this method
     if(sentenceText == null || sentenceText.isEmpty()) {
-      if(addSpace && !wordString.matches("[,;:?!.')}\\]]")) {
+      if(debug && wordString == null) {
+        System.err.println("DEBUG: empty wordString in line "+nLineTo)
+      } 
+      if(wordString != null && addSpace && !wordString.matches("[,;:?!.')}\\]]")) {
         sb.append(" ")
         curOffsetFrom += 1
       }
