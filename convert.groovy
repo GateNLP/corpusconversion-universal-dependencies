@@ -20,7 +20,7 @@ def sentOrigPrefix = "# sentence-text: "
 def cli = new CliBuilder(usage:'convert.groovy [-h] [-n 1] [-o] infile outdir')
 cli.h(longOpt: 'help', "Show usage information")
 cli.o(longOpt: 'orig', "Use original sentence text from comment line if present")
-cli.n(longOpt: 'nsent', args: 1, argName: 'nsent', "Number of sentences per output document (0=single output document)")
+cli.n(longOpt: 'nsent', args: 1, argName: 'nsent', "Number of sentences per output document (0=single output document, default: 1)")
 cli.i(longOpt: 'sentId', args: 1, argName: 'sentId', "Comment prefix for sentence id comment, without leading '# ' and trailing space.")
 cli.t(longOpt: 'sentOrig', args: 1, argName: 'sentOrig', "Comment prefix for sentence text comment, without leading '# ' and trailing space.")
 cli.v(longOpt: 'verbose', "Show more verbose information")
